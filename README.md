@@ -3,7 +3,13 @@
 这是专门为 SSPanel-UIM 面板定制的 V2bX 版本，支持完整的 VLESS Reality 节点对接。
 
 ## 一键安装脚本
-wget -N https://raw.githubusercontent.com/q42602736/V2BX-malio/main/install.sh && bash install.sh
+```bash
+curl -fL --retry 3 https://github.com/Laosixok/V2BX-malio/releases/latest/download/install.sh -o /tmp/V2bX-install.sh && bash /tmp/V2bX-install.sh
+```
+
+仅在本仓库发布包含安装包的 Release 后可用；支持 Linux amd64 / arm64。
+更新保留 `/etc/V2bX` 配置，旧核心备份为 `/usr/local/V2bX/V2bX.previous`。
+可在命令末尾追加发布标签安装指定版本。详见 [AnyTLS 修复与验证](docs/anytls-memory-fix.md)。
 
 ## 🚀 特性
 
