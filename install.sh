@@ -39,11 +39,9 @@ if [[ $arch == "x86_64" || $arch == "x64" || $arch == "amd64" ]]; then
     arch="64"
 elif [[ $arch == "aarch64" || $arch == "arm64" ]]; then
     arch="arm64-v8a"
-elif [[ $arch == "s390x" ]]; then
-    arch="s390x"
 else
-    arch="64"
-    echo -e "${red}检测架构失败，使用默认架构: ${arch}${plain}"
+    echo "不支持的架构: ${arch}（仅支持 amd64 / arm64）"
+    exit 1
 fi
 
 echo "架构: ${arch}"
@@ -124,45 +122,89 @@ check_status() {
 }
 
 install_V2bX() {
-    if [[ -e /usr/local/V2bX/ ]]; then
-        rm -rf /usr/local/V2bX/
+    local stage asset url backup="" had_core=false
+    stage=$(mktemp -d) || return 1
+    trap "rm -rf '$stage'" EXIT
+    last_version=${1:-}
+    if [[ -z "$last_version" ]]; then
+        last_version=$(curl -fsSL "https://api.github.com/repos/Laosixok/V2BX-malio/releases/latest" | sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p')
     fi
-
-    mkdir /usr/local/V2bX/ -p
-    cd /usr/local/V2bX/
-
-    if  [ $# == 0 ] ;then
-        # 使用q42602736的V2BX-malio仓库
-        last_version=$(curl -Ls "https://api.github.com/repos/q42602736/V2BX-malio/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        if [[ ! -n "$last_version" ]]; then
-            echo -e "${red}检测 V2bX-malio 版本失败，可能是超出 Github API 限制，请稍后再试，或手动指定 V2bX 版本安装${plain}"
-            exit 1
-        fi
-        echo -e "检测到 V2bX-malio 最新版本：${last_version}，开始安装"
-        wget -q -N --no-check-certificate -O /usr/local/V2bX/V2bX-linux.zip https://github.com/q42602736/V2BX-malio/releases/download/${last_version}/V2bX-linux-${arch}.zip
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}下载 V2bX-malio 失败，请确保你的服务器能够下载 Github 的文件${plain}"
-            exit 1
-        fi
-    else
-        last_version=$1
-        url="https://github.com/q42602736/V2BX-malio/releases/download/${last_version}/V2bX-linux-${arch}.zip"
-        echo -e "开始安装 V2bX-malio $1"
-        wget -q -N --no-check-certificate -O /usr/local/V2bX/V2bX-linux.zip ${url}
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}下载 V2bX-malio $1 失败，请确保此版本存在${plain}"
-            exit 1
-        fi
+    if [[ ! "$last_version" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        echo "无法获取有效发布版本；现有安装未修改。"
+        return 1
     fi
-
-    unzip V2bX-linux.zip
-    rm V2bX-linux.zip -f
-    chmod +x V2bX
-    mkdir /etc/V2bX/ -p
-    cp geoip.dat /etc/V2bX/
-    cp geosite.dat /etc/V2bX/
+    asset="V2bX-linux-${arch}.zip"
+    url="https://github.com/Laosixok/V2BX-malio/releases/download/${last_version}"
+    echo "下载 V2bX ${last_version} (${arch})"
+    if ! curl -fL --retry 3 "$url/$asset" -o "$stage/$asset" ||
+       ! curl -fL --retry 3 "$url/SHA256SUMS" -o "$stage/SHA256SUMS"; then
+        echo "下载失败；现有安装未修改。"
+        return 1
+    fi
+    # Only verify the selected archive: the release also contains other architectures.
+    if ! (cd "$stage" && awk -v name="$asset" '$2 == name {print}' SHA256SUMS > selected.sha256 &&
+          test -s selected.sha256 && sha256sum -c selected.sha256 &&
+          unzip -tq "$asset" && unzip -q "$asset" -d unpack); then
+        echo "发布包校验失败；现有安装未修改。"
+        return 1
+    fi
+    for file in V2bX V2bX.sh V2bX.service initconfig.sh config.json dns.json route.json custom_inbound.json custom_outbound.json geoip.dat geosite.dat geoip.db geosite.db; do
+        if [[ ! -s "$stage/unpack/$file" ]]; then
+            echo "发布包缺少 $file；现有安装未修改。"
+            return 1
+        fi
+    done
+    chmod +x "$stage/unpack/V2bX"
+    if ! "$stage/unpack/V2bX" version; then
+        echo "新核心无法在此系统运行；现有安装未修改。"
+        return 1
+    fi
+    # Downloads and validation finish before stopping or replacing the existing core.
+    mkdir -p /usr/local/V2bX /etc/V2bX
+    if [[ -f /usr/local/V2bX/V2bX ]]; then
+        had_core=true
+        backup=$(mktemp -d /usr/local/V2bX-backup.XXXXXX) || return 1
+        chmod 700 "$backup"
+        cp -a /usr/local/V2bX "$backup/core" || return 1
+        cp -a /etc/V2bX "$backup/config" || return 1
+        cp -p /usr/local/V2bX/V2bX /usr/local/V2bX/V2bX.previous || return 1
+        echo "升级备份：$backup"
+    fi
     if [[ x"${release}" == x"alpine" ]]; then
-        rm /etc/init.d/V2bX -f
+        service V2bX stop || true
+    else
+        systemctl stop V2bX || true
+    fi
+    rollback_core() {
+        if [[ "$had_core" == true ]]; then
+            if [[ x"${release}" == x"alpine" ]]; then
+                service V2bX stop || true
+            else
+                systemctl stop V2bX || true
+            fi
+            cp -p "$backup/core/V2bX" /usr/local/V2bX/V2bX.next &&
+                mv -f /usr/local/V2bX/V2bX.next /usr/local/V2bX/V2bX || return 1
+            if [[ x"${release}" == x"alpine" ]]; then
+                service V2bX start || true
+            else
+                systemctl start V2bX || true
+            fi
+            echo "新版本升级失败，已恢复旧核心；备份保留在 $backup。请检查服务状态。"
+        fi
+    }
+    # Rename the binary instead of overwriting an executable still used by `update`.
+    mv "$stage/unpack/V2bX" "$stage/V2bX" || return 1
+    if ! { cp -a "$stage/unpack/." /usr/local/V2bX/ &&
+           cp -p "$stage/V2bX" /usr/local/V2bX/V2bX.next &&
+           mv -f /usr/local/V2bX/V2bX.next /usr/local/V2bX/V2bX; }; then
+        rollback_core
+        return 1
+    fi
+    cd /usr/local/V2bX/ || return 1
+    mkdir /etc/V2bX/ -p
+
+    if [[ x"${release}" == x"alpine" ]]; then
+        if [[ ! -f /etc/init.d/V2bX ]]; then
         cat <<EOF > /etc/init.d/V2bX
 #!/sbin/openrc-run
 
@@ -180,19 +222,25 @@ depend() {
         need net
 }
 EOF
+        fi
         chmod +x /etc/init.d/V2bX
         rc-update add V2bX default
         echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
     else
-        rm /etc/systemd/system/V2bX.service -f
-        file="https://github.com/wyx2685/V2bX-script/raw/master/V2bX.service"
-        wget -q -N --no-check-certificate -O /etc/systemd/system/V2bX.service ${file}
+        if [[ ! -f /etc/systemd/system/V2bX.service ]]; then
+            cp V2bX.service /etc/systemd/system/V2bX.service
+        fi
         systemctl daemon-reload
         systemctl stop V2bX
         systemctl enable V2bX
         echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
     fi
 
+    for file in dns.json route.json custom_outbound.json custom_inbound.json geoip.dat geosite.dat geoip.db geosite.db; do
+        if [[ ! -f "/etc/V2bX/$file" ]]; then
+            cp "$file" /etc/V2bX/ || return 1
+        fi
+    done
     if [[ ! -f /etc/V2bX/config.json ]]; then
         cp config.json /etc/V2bX/
         echo -e ""
@@ -205,36 +253,27 @@ EOF
             systemctl start V2bX
         fi
         sleep 2
-        check_status
+        local status=0
+        check_status || status=$?
         echo -e ""
-        if [[ $? == 0 ]]; then
+        if [[ $status == 0 ]]; then
             echo -e "${green}V2bX 重启成功${plain}"
         else
-            echo -e "${red}V2bX 可能启动失败，请稍后使用 V2bX log 查看日志信息，若无法启动，则可能更改了配置格式，请前往 wiki 查看：https://github.com/q42602736/V2BX-malio${plain}"
+            rollback_core
+            return 1
         fi
         first_install=false
     fi
 
-    if [[ ! -f /etc/V2bX/dns.json ]]; then
-        cp dns.json /etc/V2bX/
-    fi
-    if [[ ! -f /etc/V2bX/route.json ]]; then
-        cp route.json /etc/V2bX/
-    fi
-    if [[ ! -f /etc/V2bX/custom_outbound.json ]]; then
-        cp custom_outbound.json /etc/V2bX/
-    fi
-    if [[ ! -f /etc/V2bX/custom_inbound.json ]]; then
-        cp custom_inbound.json /etc/V2bX/
-    fi
-    curl -o /usr/bin/V2bX -Ls https://raw.githubusercontent.com/wyx2685/V2bX-script/master/V2bX.sh
+    cp V2bX.sh /usr/bin/V2bX
     chmod +x /usr/bin/V2bX
     if [ ! -L /usr/bin/v2bx ]; then
         ln -s /usr/bin/V2bX /usr/bin/v2bx
         chmod +x /usr/bin/v2bx
     fi
-    cd $cur_dir
-    rm -f install.sh
+    cd "$cur_dir" || return 1
+    rm -rf "$stage"
+    trap - EXIT
     echo -e ""
     echo "V2bX 管理脚本使用方法 (兼容使用V2bX执行，大小写不敏感): "
     echo "------------------------------------------"
@@ -258,14 +297,12 @@ EOF
     if [[ $first_install == true ]]; then
         read -rp "检测到你为第一次安装V2bX,是否自动直接生成配置文件？(y/n): " if_generate
         if [[ $if_generate == [Yy] ]]; then
-            curl -o ./initconfig.sh -Ls https://raw.githubusercontent.com/wyx2685/V2bX-script/master/initconfig.sh
-            source initconfig.sh
-            rm initconfig.sh -f
+            source /usr/local/V2bX/initconfig.sh
             generate_config_file
         fi
     fi
 }
 
 echo -e "${green}开始安装${plain}"
-install_base
-install_V2bX $1
+install_base || exit 1
+install_V2bX "${1:-}"

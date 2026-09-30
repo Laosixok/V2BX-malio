@@ -11,6 +11,12 @@ type AddUsersParams struct {
 	*panel.NodeInfo
 }
 
+// UserTrafficCleaner is optional for cores that cache traffic by user. Callers
+// must exclude users that are being re-added to update their limits.
+type UserTrafficCleaner interface {
+	DeleteUserTraffic(tag string, users []string)
+}
+
 type Core interface {
 	Start() error
 	Close() error

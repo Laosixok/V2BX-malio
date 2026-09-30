@@ -7,8 +7,8 @@ import (
 	"github.com/InazumaV/V2bX/api/panel"
 	"github.com/InazumaV/V2bX/common/counter"
 	"github.com/InazumaV/V2bX/core"
+	"github.com/InazumaV/V2bX/core/sing/anytls"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/protocol/anytls"
 	"github.com/sagernet/sing-box/protocol/hysteria"
 	"github.com/sagernet/sing-box/protocol/hysteria2"
 	"github.com/sagernet/sing-box/protocol/shadowsocks"
@@ -166,4 +166,8 @@ func (b *Sing) DelUsers(users []panel.UserInfo, tag string, info *panel.NodeInfo
 		return err
 	}
 	return nil
+}
+
+func (b *Sing) DeleteUserTraffic(tag string, users []string) {
+	b.hookServer.deleteUserTraffic(tag, users)
 }

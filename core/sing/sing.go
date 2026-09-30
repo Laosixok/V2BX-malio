@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/InazumaV/V2bX/core/sing/anytls"
+
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/log"
 
@@ -37,7 +39,9 @@ func init() {
 
 func New(c *conf.CoreConfig) (vCore.Core, error) {
 	ctx := context.Background()
-	ctx = box.Context(ctx, include.InboundRegistry(), include.OutboundRegistry(), include.EndpointRegistry(), include.DNSTransportRegistry(), include.ServiceRegistry())
+	inbounds := include.InboundRegistry()
+	anytls.RegisterInbound(inbounds)
+	ctx = box.Context(ctx, inbounds, include.OutboundRegistry(), include.EndpointRegistry(), include.DNSTransportRegistry(), include.ServiceRegistry())
 	options := option.Options{}
 	if len(c.SingConfig.OriginalPath) != 0 {
 		data, err := os.ReadFile(c.SingConfig.OriginalPath)

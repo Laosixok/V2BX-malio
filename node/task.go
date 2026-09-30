@@ -99,9 +99,9 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 
 		// Update limiter
 		if len(c.Options.Name) == 0 {
-			c.tag = c.buildNodeTag(newN)
 			// Remove Old limiter
 			limiter.DeleteLimiter(c.tag)
+			c.tag = c.buildNodeTag(newN)
 			// Add new Limiter
 			l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, newA)
 			c.limiter = l
@@ -152,19 +152,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			}).Error("Add users failed")
 			return nil
 		}
-		// Check interval
-		if c.nodeInfoMonitorPeriodic.Interval != newN.PullInterval &&
-			newN.PullInterval != 0 {
-			c.nodeInfoMonitorPeriodic.Interval = newN.PullInterval
-			c.nodeInfoMonitorPeriodic.Close()
-			_ = c.nodeInfoMonitorPeriodic.Start(false)
-		}
-		if c.userReportPeriodic.Interval != newN.PushInterval &&
-			newN.PushInterval != 0 {
-			c.userReportPeriodic.Interval = newN.PullInterval
-			c.userReportPeriodic.Close()
-			_ = c.userReportPeriodic.Start(false)
-		}
+		c.updateTaskIntervals(newN)
 		log.WithField("tag", c.tag).Infof("Added %d new users", len(c.userList))
 		// exit
 		return nil
@@ -174,7 +162,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		c.limiter.AliveList = newA
 	}
 	// node no changed, check users
-	if len(newU) == 0 {
+	if newU == nil {
 		return nil
 	}
 	deleted, added := compareUserList(c.userList, newU)
@@ -188,6 +176,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			}).Error("Delete users failed")
 			return nil
 		}
+		c.deleteRemovedUserTraffic(deleted, newU)
 	}
 	if len(added) > 0 {
 		// have added users
@@ -227,6 +216,40 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			Infof("%d user deleted, %d user added", len(deleted), len(added))
 	}
 	return nil
+}
+
+func (c *Controller) deleteRemovedUserTraffic(deleted, remaining []panel.UserInfo) {
+	cleaner, ok := c.server.(vCore.UserTrafficCleaner)
+	if !ok {
+		return
+	}
+	retained := make(map[string]struct{}, len(remaining))
+	for _, user := range remaining {
+		retained[user.Uuid] = struct{}{}
+	}
+	removed := make([]string, 0, len(deleted))
+	for _, user := range deleted {
+		if _, found := retained[user.Uuid]; !found {
+			removed = append(removed, user.Uuid)
+		}
+	}
+	if len(removed) > 0 {
+		cleaner.DeleteUserTraffic(c.tag, removed)
+	}
+}
+
+func (c *Controller) updateTaskIntervals(node *panel.NodeInfo) {
+	if node.PullInterval != 0 {
+		// The monitor's callback holds its task lock. It schedules the next
+		// execution using this interval after returning; restarting it here
+		// would deadlock on that same lock.
+		c.nodeInfoMonitorPeriodic.Interval = node.PullInterval
+	}
+	if node.PushInterval != 0 && c.userReportPeriodic.Interval != node.PushInterval {
+		c.userReportPeriodic.Close()
+		c.userReportPeriodic.Interval = node.PushInterval
+		_ = c.userReportPeriodic.Start(false)
+	}
 }
 
 func (c *Controller) SpeedChecker() error {
