@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	stdexec "os/exec"
 	"strings"
 
 	"github.com/InazumaV/V2bX/common/exec"
@@ -15,10 +16,25 @@ var (
 	updateCommand = cobra.Command{
 		Use:   "update",
 		Short: "Update V2bX version",
-		Run: func(_ *cobra.Command, _ []string) {
-			exec.RunCommandStd("bash",
-				"<(curl -Ls https://raw.githubusercontents.com/InazumaV/V2bX-script/master/install.sh)",
-				targetVersion)
+		RunE: func(_ *cobra.Command, _ []string) error {
+			installer, err := os.CreateTemp("", "V2bX-install-*.sh")
+			if err != nil {
+				return err
+			}
+			path := installer.Name()
+			defer os.Remove(path)
+			if err := installer.Close(); err != nil {
+				return err
+			}
+			download := stdexec.Command("curl", "-fL", "--retry", "3",
+				"https://github.com/Laosixok/V2BX-malio/releases/latest/download/install.sh", "-o", path)
+			download.Stdout, download.Stderr = os.Stdout, os.Stderr
+			if err := download.Run(); err != nil {
+				return fmt.Errorf("download installer: %w", err)
+			}
+			install := stdexec.Command("bash", path, targetVersion)
+			install.Stdin, install.Stdout, install.Stderr = os.Stdin, os.Stdout, os.Stderr
+			return install.Run()
 		},
 		Args: cobra.NoArgs,
 	}
