@@ -144,6 +144,14 @@ func (s *Selector) DelUsers(users []panel.UserInfo, tag string, info *panel.Node
 	return t.(Core).DelUsers(users, tag, info)
 }
 
+func (s *Selector) DeleteUserTraffic(tag string, users []string) {
+	if selected, found := s.nodes.Load(tag); found {
+		if cleaner, ok := selected.(UserTrafficCleaner); ok {
+			cleaner.DeleteUserTraffic(tag, users)
+		}
+	}
+}
+
 func (s *Selector) Protocols() []string {
 	protocols := make([]string, 0)
 	for i := range s.cores {
