@@ -51,7 +51,7 @@ func GetSystemInfo() (Cpu float64, Mem float64, Disk float64, Uptime uint64, err
 
 	// Return error if any component failed
 	if errorString != "" {
-		err = fmt.Errorf(errorString)
+		err = fmt.Errorf("%s", errorString)
 	}
 
 	return Cpu, Mem, Disk, Uptime, err
