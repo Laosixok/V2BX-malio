@@ -63,7 +63,7 @@ arm64 服务器把 GOARCH 和输出名称改为 arm64。此构建复用 `build.s
 - macOS 默认 CGO 的 core/sing 构建会触发原依赖 `resolv_darwin_cgo.go` 的 `_res` C 选择表达式错误；所以全量回归采用 `CGO_ENABLED=0`。独立 AnyTLS 竞态测试使用 CGO 成功运行，链接器有 LC_DYSYMTAB 警告但退出状态为 0。
 
 - 追加 `go test -race ./node ./core -run 'Test(Monitor|SelectorDeleteUserTraffic)'`：通过。
-- Linux amd64、arm64 完整发布标签构建：均通过；输出为静态链接 ELF。二进制 build info 已核对 sing-anytls v0.0.13、sing-box_mod v1.12.0-beta.17.2、全部发布标签和目标架构。版本标签为 `anytls-fix-20260929`。
+- Linux amd64、arm64 完整发布标签构建：均通过；输出为静态链接 ELF。二进制 build info 已核对 sing-anytls v0.0.13、sing-box_mod v1.12.0-beta.17.2、全部发布标签和目标架构。原修复版标签为 `anytls-fix-20260929`；当前迁移发布版的两种架构均已重新构建，内嵌版本为 `1.0.7`。
 - 这两项 Linux 构建是在 macOS 交叉编译，尚未在用户 Linux 服务器实际启动，也没有进行生产负载 24–48 小时验证。
 
 ## 修改文件与提交
@@ -76,7 +76,7 @@ arm64 服务器把 GOARCH 和输出名称改为 arm64。此构建复用 `build.s
 - `core/sing/anytls/inbound_test.go`、`core/sing/hook_test.go`、`core/sing/lifecycle_test.go`、`core/selector_test.go`、`node/task_test.go`：回归测试。
 - 本说明及 `scripts/observe-memory.sh`：部署和观察方法。
 
-本地分支 `fix/anytls-session-lifecycle`。当前没有 GitHub 登录凭据，推送 dry-run 返回 `could not read Username`；未推送、未创建 PR。交付包包含 Git 补丁与源码。取得仓库登录权限后，可推送本地分支并向该 fork 的 main 创建 PR。
+修复分支为 `fix/anytls-session-lifecycle`，通过 GitHub 网页同步到用户仓库，变更集中在 [PR #1](https://github.com/Laosixok/V2BX-malio/pull/1)。当前迁移发布版本为 `1.0.7`，以仓库 Releases 页面和 PR 状态为准。
 
 ## 单节点部署及回滚
 
@@ -129,6 +129,18 @@ sudo bash scripts/observe-memory.sh V2bX 60 | tee anytls-memory.csv
 curl -fL --retry 3 https://github.com/Laosixok/V2BX-malio/releases/latest/download/install.sh -o /tmp/V2bX-install.sh && bash /tmp/V2bX-install.sh
 ```
 
-在该仓库正式发布 Release 之前，此命令不可用。只支持 Linux amd64 / arm64；可追加 Release 标签指定版本。脚本先下载并校验所选 ZIP 的 SHA256、完整性和必需文件，成功后才停止服务、替换核心。升级保留 `/etc/V2bX` 已有配置，旧核心备份为 `/usr/local/V2bX/V2bX.previous`。这不是所有系统的完整事务回滚；安装后仍需检查 `V2bX status`、日志及实际连接。
+1.0.7 是本 fork 的迁移修复版，高于上游 1.0.6。只支持 Linux amd64 / arm64；可追加 Release 标签指定版本。脚本先下载并校验所选 ZIP 的 SHA256、完整性和必需文件，成功后才停止服务、替换核心。升级保留 `/etc/V2bX` 已有配置，旧核心备份为 `/usr/local/V2bX/V2bX.previous`。这不是所有系统的完整事务回滚；安装后仍需检查 `V2bX status`、日志及实际连接。
 
-管理脚本继承原上游菜单；首次安装的配置向导仍需要填写服务器实际面板信息。安装脚本已在隔离临时目录通过下载失败、校验失败、缺少文件、正常更新四种模拟测试，没有在真实 Linux 服务器执行安装。测试命令：`python3 scripts/test-installer.py`。
+管理脚本继承原上游菜单；首次安装的配置向导仍需要填写服务器实际面板信息。安装脚本已在隔离临时目录通过下载失败、校验失败、缺少文件、无效核心、启动失败回退、正常更新六种模拟测试，没有在真实 Linux 服务器执行安装。测试命令：`python3 scripts/test-installer.py`。
+
+### 从上游 1.0.6 迁移到 1.0.7
+
+上游 1.0.6 标签解析后的源码与本修复的基础版本一致；不改变 SSPanel/Malio API 或现有配置结构。
+
+```bash
+wget -O install.sh https://raw.githubusercontent.com/Laosixok/V2BX-malio/main/install.sh && bash install.sh
+```
+
+旧上游网址仍由上游维护，必须使用上述本仓库地址完成一次迁移，随后 `V2bX update` 继续从本仓库更新。无需卸载。脚本保留配置、证书、规则数据库、现有 systemd/OpenRC 服务文件；升级前在 `/usr/local/V2bX-backup.*` 保存核心目录与配置目录（权限 700）。检查新二进制能运行后才停止旧服务，使用重命名替换二进制以支持核心自更新；启动检查失败时恢复备份的旧核心并尝试启动。升级有短暂重启，不保证连接不中断。备份不自动删除，可确认运行稳定后自行保留或清理。
+
+六项测试是隔离文件系统与模拟服务测试，尚未在真实 Linux 服务器迁移。升级后用 `V2bX version`、`V2bX status`、`V2bX log` 核对版本、启动状态及面板同步，再观察 24–48 小时。
