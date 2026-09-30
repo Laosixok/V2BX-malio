@@ -122,7 +122,7 @@ check_status() {
 }
 
 install_V2bX() {
-    local stage asset url
+    local stage asset url backup="" had_core=false
     stage=$(mktemp -d) || return 1
     trap "rm -rf '$stage'" EXIT
     last_version=${1:-}
@@ -155,23 +155,56 @@ install_V2bX() {
         fi
     done
     chmod +x "$stage/unpack/V2bX"
+    if ! "$stage/unpack/V2bX" version; then
+        echo "新核心无法在此系统运行；现有安装未修改。"
+        return 1
+    fi
     # Downloads and validation finish before stopping or replacing the existing core.
     mkdir -p /usr/local/V2bX /etc/V2bX
     if [[ -f /usr/local/V2bX/V2bX ]]; then
+        had_core=true
+        backup=$(mktemp -d /usr/local/V2bX-backup.XXXXXX) || return 1
+        chmod 700 "$backup"
+        cp -a /usr/local/V2bX "$backup/core" || return 1
+        cp -a /etc/V2bX "$backup/config" || return 1
         cp -p /usr/local/V2bX/V2bX /usr/local/V2bX/V2bX.previous || return 1
+        echo "升级备份：$backup"
     fi
     if [[ x"${release}" == x"alpine" ]]; then
         service V2bX stop || true
     else
         systemctl stop V2bX || true
     fi
-    cp -a "$stage/unpack/." /usr/local/V2bX/ || return 1
+    rollback_core() {
+        if [[ "$had_core" == true ]]; then
+            if [[ x"${release}" == x"alpine" ]]; then
+                service V2bX stop || true
+            else
+                systemctl stop V2bX || true
+            fi
+            cp -p "$backup/core/V2bX" /usr/local/V2bX/V2bX.next &&
+                mv -f /usr/local/V2bX/V2bX.next /usr/local/V2bX/V2bX || return 1
+            if [[ x"${release}" == x"alpine" ]]; then
+                service V2bX start || true
+            else
+                systemctl start V2bX || true
+            fi
+            echo "新版本升级失败，已恢复旧核心；备份保留在 $backup。请检查服务状态。"
+        fi
+    }
+    # Rename the binary instead of overwriting an executable still used by `update`.
+    mv "$stage/unpack/V2bX" "$stage/V2bX" || return 1
+    if ! { cp -a "$stage/unpack/." /usr/local/V2bX/ &&
+           cp -p "$stage/V2bX" /usr/local/V2bX/V2bX.next &&
+           mv -f /usr/local/V2bX/V2bX.next /usr/local/V2bX/V2bX; }; then
+        rollback_core
+        return 1
+    fi
     cd /usr/local/V2bX/ || return 1
     mkdir /etc/V2bX/ -p
-    cp geoip.dat /etc/V2bX/
-    cp geosite.dat /etc/V2bX/
+
     if [[ x"${release}" == x"alpine" ]]; then
-        rm /etc/init.d/V2bX -f
+        if [[ ! -f /etc/init.d/V2bX ]]; then
         cat <<EOF > /etc/init.d/V2bX
 #!/sbin/openrc-run
 
@@ -189,24 +222,25 @@ depend() {
         need net
 }
 EOF
+        fi
         chmod +x /etc/init.d/V2bX
         rc-update add V2bX default
         echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
     else
-        rm /etc/systemd/system/V2bX.service -f
-        cp V2bX.service /etc/systemd/system/V2bX.service
+        if [[ ! -f /etc/systemd/system/V2bX.service ]]; then
+            cp V2bX.service /etc/systemd/system/V2bX.service
+        fi
         systemctl daemon-reload
         systemctl stop V2bX
         systemctl enable V2bX
         echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
     fi
 
-    for file in dns.json route.json custom_outbound.json custom_inbound.json; do
+    for file in dns.json route.json custom_outbound.json custom_inbound.json geoip.dat geosite.dat geoip.db geosite.db; do
         if [[ ! -f "/etc/V2bX/$file" ]]; then
             cp "$file" /etc/V2bX/ || return 1
         fi
     done
-    cp geoip.db geosite.db /etc/V2bX/ || return 1
     if [[ ! -f /etc/V2bX/config.json ]]; then
         cp config.json /etc/V2bX/
         echo -e ""
@@ -225,7 +259,8 @@ EOF
         if [[ $status == 0 ]]; then
             echo -e "${green}V2bX 重启成功${plain}"
         else
-            echo -e "${red}V2bX 可能启动失败，请稍后使用 V2bX log 查看日志信息，若无法启动，则可能更改了配置格式，请前往 wiki 查看：https://github.com/Laosixok/V2BX-malio${plain}"
+            rollback_core
+            return 1
         fi
         first_install=false
     fi

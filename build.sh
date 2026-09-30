@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p build
-version=${VERSION:-$(git describe --tags --always --dirty)}
+version=${VERSION:-$(cat VERSION)}
 for target in amd64 arm64; do
     echo "编译 Linux $target ($version)..."
     CGO_ENABLED=0 GOOS=linux GOARCH="$target" go build \

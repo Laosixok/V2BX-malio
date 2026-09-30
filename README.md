@@ -4,11 +4,15 @@
 
 ## 一键安装脚本
 ```bash
-curl -fL --retry 3 https://github.com/Laosixok/V2BX-malio/releases/latest/download/install.sh -o /tmp/V2bX-install.sh && bash /tmp/V2bX-install.sh
+wget -O install.sh https://raw.githubusercontent.com/Laosixok/V2BX-malio/main/install.sh && bash install.sh
 ```
 
-仅在本仓库发布包含安装包的 Release 后可用；支持 Linux amd64 / arm64。
-更新保留 `/etc/V2bX` 配置，旧核心备份为 `/usr/local/V2bX/V2bX.previous`。
+本 fork 修复版为 **1.0.7**，高于上游 1.0.6；支持 Linux amd64 / arm64。
+已有上游 1.0.6 的服务器直接执行上述命令即可迁移，不需要卸载或重新填写面板信息。
+保留 `/etc/V2bX` 配置、证书与规则数据库以及已有服务文件；升级前备份核心和配置到
+`/usr/local/V2bX-backup.*`，旧核心另存 `/usr/local/V2bX/V2bX.previous`。
+新核心不能运行时不替换，启动检查失败时恢复旧核心。服务重启会短暂断开连接。
+迁移后使用 `V2bX update` 从本仓库继续更新。原上游网址仍由上游控制，不会自动改为你的 fork。
 可在命令末尾追加发布标签安装指定版本。详见 [AnyTLS 修复与验证](docs/anytls-memory-fix.md)。
 
 ## 🚀 特性
