@@ -1,0 +1,1 @@
+Management menu, configuration wizard and service adapted from https://github.com/wyx2685/V2bX-script (master, retrieved 2026-09-30). Upstream license is included. Installation and update routes now use Laosixok/V2BX-malio releases.
