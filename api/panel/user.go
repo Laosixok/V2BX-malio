@@ -15,6 +15,7 @@ type OnlineUser struct {
 }
 
 type UserInfo struct {
+	Password    string `json:"password,omitempty" msgpack:"password,omitempty"`
 	Id          int    `json:"id" msgpack:"id"`
 	Uuid        string `json:"uuid" msgpack:"uuid"`
 	SpeedLimit  int    `json:"speed_limit" msgpack:"speed_limit"`
@@ -150,4 +151,12 @@ func (c *Client) ReportNodeOnlineUsers(data *map[int][]string) error {
 	}
 
 	return nil
+}
+
+// ShadowsocksPassword separates authentication from the stable accounting UUID.
+func (u UserInfo) ShadowsocksPassword() string {
+	if u.Password != "" {
+		return u.Password
+	}
+	return u.Uuid
 }
