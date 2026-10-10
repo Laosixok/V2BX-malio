@@ -15,3 +15,13 @@ func TestCompareUserListDetectsDeviceLimitChanges(t *testing.T) {
 		t.Fatalf("device limit change should reload the user, deleted=%d added=%d", len(deleted), len(added))
 	}
 }
+
+func TestSSPasswordChange(t *testing.T) {
+	old := panel.UserInfo{Id: 1, Uuid: "stable", Password: "before"}
+	next := old
+	next.Password = "after"
+	deleted, added := compareUserList([]panel.UserInfo{old}, []panel.UserInfo{next})
+	if len(deleted) != 1 || len(added) != 1 || added[0].Uuid != "stable" {
+		t.Fatal("password rotation not applied")
+	}
+}

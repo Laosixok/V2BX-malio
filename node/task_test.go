@@ -147,7 +147,7 @@ func TestMonitorReloadReplacesOldLimiter(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/mod_mu/nodes/1/info" {
-			fmt.Fprint(w, `{"ret":1,"data":{"sort":16,"server":"example.test;port=443&security=reality"}}`)
+			fmt.Fprint(w, `{"ret":1,"data":{"sort":16,"server":"example.test;port=443&security=reality&privateKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`)
 		} else {
 			w.WriteHeader(http.StatusNotModified)
 		}

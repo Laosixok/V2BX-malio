@@ -2,7 +2,6 @@ package node
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/InazumaV/V2bX/api/panel"
 	"github.com/InazumaV/V2bX/common/serverstatus"
@@ -161,14 +160,14 @@ func (c *Controller) reportUserTrafficTask() (err error) {
 }
 
 func compareUserList(old, new []panel.UserInfo) (deleted, added []panel.UserInfo) {
-	oldMap := make(map[string]int)
+	oldMap := make(map[panel.UserInfo]int)
 	for i, user := range old {
-		key := user.Uuid + strconv.Itoa(user.SpeedLimit) + strconv.Itoa(user.DeviceLimit)
+		key := user
 		oldMap[key] = i
 	}
 
 	for _, user := range new {
-		key := user.Uuid + strconv.Itoa(user.SpeedLimit) + strconv.Itoa(user.DeviceLimit)
+		key := user
 		if _, exists := oldMap[key]; !exists {
 			added = append(added, user)
 		} else {
