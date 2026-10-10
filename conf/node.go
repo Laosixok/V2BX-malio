@@ -23,6 +23,8 @@ type rawNodeConfig struct {
 }
 
 type ApiConfig struct {
+	SSPort       int    `json:"SSPort,omitempty"` // SSPanel AEAD single-port backend listener
+	SSMethod     string `json:"SSMethod,omitempty"`
 	APIHost      string `json:"ApiHost"`
 	NodeID       int    `json:"NodeID"`
 	Key          string `json:"ApiKey"`
