@@ -23,7 +23,7 @@ func buildSSUsers(tag string, userInfo []panel.UserInfo, cypher string, serverKe
 func buildSSUser(tag string, userInfo *panel.UserInfo, cypher string, serverKey string) (user *protocol.User) {
 	if serverKey == "" {
 		ssAccount := &shadowsocks.Account{
-			Password:   userInfo.Uuid,
+			Password:   userInfo.ShadowsocksPassword(),
 			CipherType: getCipherFromString(cypher),
 		}
 		return &protocol.User{
@@ -42,7 +42,7 @@ func buildSSUser(tag string, userInfo *panel.UserInfo, cypher string, serverKey 
 			keyLength = 32
 		}
 		ssAccount := &shadowsocks_2022.Account{
-			Key:   base64.StdEncoding.EncodeToString([]byte(userInfo.Uuid[:keyLength])),
+			Key: base64.StdEncoding.EncodeToString([]byte(userInfo.Uuid[:keyLength])),
 		}
 		return &protocol.User{
 			Level:   0,

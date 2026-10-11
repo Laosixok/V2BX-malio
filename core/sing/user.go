@@ -46,7 +46,7 @@ func (b *Sing) AddUsers(p *core.AddUsersParams) (added int, err error) {
 	case "shadowsocks":
 		us := make([]option.ShadowsocksUser, len(p.Users))
 		for i := range p.Users {
-			var password = p.Users[i].Uuid
+			var password = p.Users[i].ShadowsocksPassword()
 			switch p.Shadowsocks.Cipher {
 			case "2022-blake3-aes-128-gcm":
 				password = base64.StdEncoding.EncodeToString([]byte(password[:16]))

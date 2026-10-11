@@ -18,6 +18,8 @@ import (
 
 // SSPanelClient is the client for SSPanel-UIM API
 type SSPanelClient struct {
+	ssPort           int
+	ssMethod         string
 	client           *resty.Client
 	APIHost          string
 	Token            string
@@ -114,6 +116,8 @@ func NewSSPanel(c *conf.ApiConfig) (*SSPanelClient, error) {
 
 	return &SSPanelClient{
 		client:   client,
+		ssPort:   c.SSPort,
+		ssMethod: c.SSMethod,
 		Token:    c.Key,
 		APIHost:  c.APIHost,
 		NodeType: c.NodeType,
@@ -135,6 +139,12 @@ func (c *SSPanelClient) GetNodeInfo() (node *NodeInfo, err error) {
 		ForceContentType("application/json").
 		Get(path)
 
+	if err != nil {
+		return nil, fmt.Errorf("request SSPanel: %w", err)
+	}
+	if r == nil {
+		return nil, fmt.Errorf("empty SSPanel response")
+	}
 	if r.StatusCode() == 304 {
 		logrus.Infof("节点配置未变更 (304)")
 		return nil, nil
@@ -146,8 +156,6 @@ func (c *SSPanelClient) GetNodeInfo() (node *NodeInfo, err error) {
 	if c.responseBodyHash == newBodyHash {
 		return nil, nil
 	}
-	c.responseBodyHash = newBodyHash
-	c.nodeEtag = r.Header().Get("ETag")
 	if err = c.checkResponse(r, path, err); err != nil {
 		return nil, err
 	}
@@ -221,8 +229,33 @@ func (c *SSPanelClient) GetNodeInfo() (node *NodeInfo, err error) {
 
 	// Create node configuration based on sort type
 	switch sspanelResp.Data.Sort {
+	case 0, 10: // SSPanel AEAD single-port
+		if c.NodeType != "shadowsocks" {
+			return nil, fmt.Errorf("SSPanel sort %d requires NodeType shadowsocks", sspanelResp.Data.Sort)
+		}
+		node, err = c.createShadowsocksNode(node, serverHost)
+		if err != nil {
+			return nil, err
+		}
 	case 15, 16: // VLESS
-		node = c.createVlessNode(node, serverHost, serverParams, sspanelResp.Data.Sort)
+		if c.NodeType != "vless" {
+			return nil, fmt.Errorf("SSPanel sort %d requires NodeType vless", sspanelResp.Data.Sort)
+		}
+		host, params, parseErr := parseVlessServer(sspanelResp.Data.Server)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if params["security"] == "reality" && sspanelResp.Data.Sort != 16 {
+			return nil, fmt.Errorf("Reality requires node sort 16")
+		}
+		if sspanelResp.Data.Sort == 16 && (params["net"] != "tcp" || params["privateKey"] == "") {
+			return nil, fmt.Errorf("Reality requires TCP and a privateKey")
+		}
+		if flow := params["flow"]; flow != "" && (flow != "xtls-rprx-vision" || params["net"] != "tcp" || (params["security"] != "tls" && sspanelResp.Data.Sort != 16)) {
+			return nil, fmt.Errorf("VLESS Vision requires TCP with TLS or Reality")
+		}
+		node.Type = "vless"
+		node = c.createVlessNode(node, host, params, sspanelResp.Data.Sort)
 	case 17: // Hysteria2
 		node = c.createHy2Node(node, serverHost, serverParams)
 	case 18: // AnyTLS
@@ -242,6 +275,8 @@ func (c *SSPanelClient) GetNodeInfo() (node *NodeInfo, err error) {
 	// Set Common field (required for sing-box core)
 	var commonNode *CommonNode
 	switch sspanelResp.Data.Sort {
+	case 0, 10:
+		commonNode = &node.Shadowsocks.CommonNode
 	case 15, 16: // VLESS
 		if node.VAllss != nil {
 			commonNode = &node.VAllss.CommonNode
@@ -269,6 +304,8 @@ func (c *SSPanelClient) GetNodeInfo() (node *NodeInfo, err error) {
 		return nil, fmt.Errorf("failed to create common node for sort type: %d", sspanelResp.Data.Sort)
 	}
 	node.Common = commonNode
+	c.responseBodyHash = newBodyHash
+	c.nodeEtag = r.Header().Get("ETag")
 
 	return node, nil
 }
@@ -289,8 +326,9 @@ func (c *SSPanelClient) createVlessNode(node *NodeInfo, host string, params map[
 				PullInterval: "60s",
 			},
 		},
-		Network: "tcp",
-		Flow:    params["flow"],
+		Network:         params["net"],
+		NetworkSettings: vlessNetworkSettings(params),
+		Flow:            params["flow"],
 	}
 
 	// Set security type
@@ -311,7 +349,7 @@ func (c *SSPanelClient) createVlessNode(node *NodeInfo, host string, params map[
 		if dest == "" {
 			dest = serverName
 		}
-		
+
 		destParts := strings.Split(dest, ":")
 		destHost := destParts[0]
 		destPort := "443"
@@ -335,6 +373,10 @@ func (c *SSPanelClient) createVlessNode(node *NodeInfo, host string, params map[
 		}
 		logrus.Infof("Reality: serverName=%s, dest=%s, port=%s", serverName, destHost, destPort)
 		node.Security = Reality
+	} else if params["security"] == "tls" {
+		vlessNode.Tls = Tls
+		vlessNode.TlsSettings.ServerName = params["serverName"]
+		node.Security = Tls
 	} else {
 		vlessNode.Tls = None
 		node.Security = None
@@ -557,6 +599,12 @@ func (c *SSPanelClient) GetUserList() ([]UserInfo, error) {
 		ForceContentType("application/json").
 		Get(path)
 
+	if err != nil {
+		return nil, fmt.Errorf("request SSPanel: %w", err)
+	}
+	if r == nil {
+		return nil, fmt.Errorf("empty SSPanel response")
+	}
 	if r.StatusCode() == 304 {
 		return nil, nil
 	}
@@ -575,14 +623,19 @@ func (c *SSPanelClient) GetUserList() ([]UserInfo, error) {
 	}
 
 	// Convert SSPanel users to V2bX format
-	users := make([]UserInfo, len(sspanelResp.Data))
-	for i, sspanelUser := range sspanelResp.Data {
-		users[i] = UserInfo{
-			Id:          sspanelUser.Id,
-			Uuid:        sspanelUser.Uuid,
-			SpeedLimit:  sspanelUser.NodeSpeedLimit,
-			DeviceLimit: sspanelUser.NodeConnector,
+	users := make([]UserInfo, 0, len(sspanelResp.Data))
+	for _, u := range sspanelResp.Data {
+		user := UserInfo{Id: u.Id, Uuid: u.Uuid, SpeedLimit: u.NodeSpeedLimit, DeviceLimit: u.NodeConnector}
+		if c.NodeType == "shadowsocks" {
+			if u.IsMultiUser != 0 {
+				continue
+			} // carrier accounts are not subscribers
+			if u.Uuid == "" || u.Passwd == "" {
+				return nil, fmt.Errorf("SSPanel SS user %d requires uuid and passwd", u.Id)
+			}
+			user.Password = u.Passwd
 		}
+		users = append(users, user)
 	}
 
 	c.userEtag = r.Header().Get("ETag")
@@ -695,7 +748,7 @@ func (c *SSPanelClient) ReportNodeOnlineUsers(data *map[int][]string) error {
 			"ip_count": len(ips),
 			"ips":      ips,
 		}).Debug("处理用户在线IP")
-		
+
 		for _, ip := range ips {
 			aliveData = append(aliveData, map[string]interface{}{
 				"ip":      ip,
@@ -923,7 +976,7 @@ func (c *SSPanelClient) createAnyTlsNode(node *NodeInfo, host string, params map
 	// Parse padding_scheme if present
 	if paddingSchemeStr := params["padding_scheme"]; paddingSchemeStr != "" {
 		logrus.Infof("原始padding_scheme字符串(URL编码): '%s'", paddingSchemeStr)
-		
+
 		// URL decode the padding_scheme string first
 		decodedStr, err := url.QueryUnescape(paddingSchemeStr)
 		if err != nil {
@@ -931,7 +984,7 @@ func (c *SSPanelClient) createAnyTlsNode(node *NodeInfo, host string, params map
 			decodedStr = paddingSchemeStr // fallback to original
 		}
 		logrus.Infof("URL解码后的padding_scheme: '%s'", decodedStr)
-		
+
 		// padding_scheme is a JSON array string like: ["stop=8","0=30-30","1=100-400"]
 		var paddingScheme []string
 		if err := json.Unmarshal([]byte(decodedStr), &paddingScheme); err != nil {
@@ -983,10 +1036,10 @@ func (c *SSPanelClient) createAnyTlsNode(node *NodeInfo, host string, params map
 
 	node.AnyTls = anyTlsNode
 	node.Security = Tls // AnyTLS requires TLS
-	
+
 	logrus.Infof("AnyTLS节点创建完成: host=%s, port=%d, server_name=%s",
 		anyTlsNode.Host, anyTlsNode.ServerPort, anyTlsNode.ServerName)
 	logrus.Infof("最终节点配置: %+v", anyTlsNode)
-	
+
 	return node
 }
