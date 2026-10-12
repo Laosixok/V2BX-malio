@@ -47,7 +47,11 @@ hk09.linkms001.com;server=cn2.hk.linkms001.store|port=22222#29346
 
 客户端连接 `cn2.hk.linkms001.store:29346`；入口转发到后端实际监听的 `22222`。后端不会创建这条转发。
 
-当前面板 `/mod_mu/nodes/{id}/info` 对 sort=0/10 只下发第一个主机名，不包含端口映射和加密方式。因此新增显式配置 `SSPort` / `SSMethod`，不能直接从此接口自动还原。`SSMethod` 必须与面板单端口承载用户的加密方式一致；以下 aes-128-gcm 只是示例。
+新版面板接口自动下发 `ss_port` / `ss_method`：从节点地址的 `port=22222#29346` 取后端端口 22222，并查找该端口对应的单端口承载账号，读取其加密方式。旧的 `server` 字段不变。后端无需填写 `SSPort` / `SSMethod`；如填写，则按字段覆盖面板值，兼容旧面板。
+
+必须同时升级面板 `NodeController.php`、新增 `SSPanelShadowsocks.php` 和后端核心。只有一组明确的端口映射且唯一匹配 origin/plain AEAD 承载账号时才自动启用；多组映射、只有偏移量、缺少账号、SSR/SS2022、节点固定共享密码模式会返回明确错误，不猜测端口。面板配置变更由正常配置轮询检测。
+
+以下是自动读取模式：
 
 ```json
 {
@@ -56,9 +60,7 @@ hk09.linkms001.com;server=cn2.hk.linkms001.store|port=22222#29346
     "ApiHost": "https://panel.example.com",
     "ApiKey": "替换为面板 muKey",
     "NodeID": 10,
-    "NodeType": "shadowsocks",
-    "SSPort": 22222,
-    "SSMethod": "aes-128-gcm"
+    "NodeType": "shadowsocks"
   },
   "Options": {
     "Core": "xray",
