@@ -39,6 +39,9 @@ type SSPanelNodeResponse struct {
 }
 
 type SSPanelNodeData struct {
+	SSPort         int     `json:"ss_port"`
+	SSMethod       string  `json:"ss_method"`
+	SSConfigError  string  `json:"ss_config_error"`
 	NodeGroup      int     `json:"node_group"`
 	NodeClass      int     `json:"node_class"`
 	NodeSpeedLimit int     `json:"node_speedlimit"`
@@ -233,7 +236,7 @@ func (c *SSPanelClient) GetNodeInfo() (node *NodeInfo, err error) {
 		if c.NodeType != "shadowsocks" {
 			return nil, fmt.Errorf("SSPanel sort %d requires NodeType shadowsocks", sspanelResp.Data.Sort)
 		}
-		node, err = c.createShadowsocksNode(node, serverHost)
+		node, err = c.createShadowsocksNode(node, serverHost, sspanelResp.Data)
 		if err != nil {
 			return nil, err
 		}

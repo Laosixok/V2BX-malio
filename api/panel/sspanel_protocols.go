@@ -96,20 +96,28 @@ func vlessNetworkSettings(params map[string]string) json.RawMessage {
 	return data
 }
 
-// Legacy SSPanel sends only the origin host for sort 0/10; the public port
-// mapping belongs to the client, not the backend listener. Require explicit
-// backend settings rather than guessing from a user's port or defaulting to 443.
-func (c *SSPanelClient) createShadowsocksNode(node *NodeInfo, host string) (*NodeInfo, error) {
-	if c.ssPort < 1 || c.ssPort > 65535 {
-		return nil, fmt.Errorf("SSPanel Shadowsocks requires ApiConfig.SSPort (backend listen port, e.g. 22222, not public mapped port)")
+// Explicit local settings override automatic panel settings for legacy deployments.
+func (c *SSPanelClient) createShadowsocksNode(node *NodeInfo, host string, data SSPanelNodeData) (*NodeInfo, error) {
+	port, method := data.SSPort, data.SSMethod
+	if c.ssPort != 0 {
+		port = c.ssPort
 	}
-	switch c.ssMethod {
+	if c.ssMethod != "" {
+		method = c.ssMethod
+	}
+	if data.SSConfigError != "" && (c.ssPort == 0 || c.ssMethod == "") {
+		return nil, fmt.Errorf("SSPanel Shadowsocks configuration: %s", data.SSConfigError)
+	}
+	if port < 1 || port > 65535 {
+		return nil, fmt.Errorf("SSPanel Shadowsocks missing ss_port: upgrade the panel API or set ApiConfig.SSPort (backend listener, not public mapped port)")
+	}
+	switch method {
 	case "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305":
 	default:
-		return nil, fmt.Errorf("SSPanel Shadowsocks requires ApiConfig.SSMethod: aes-128-gcm, aes-256-gcm or chacha20-ietf-poly1305; SSR/plugins and SS2022 are not this adapter's AEAD mode")
+		return nil, fmt.Errorf("SSPanel Shadowsocks missing/unsupported ss_method: upgrade the panel API or set ApiConfig.SSMethod: aes-128-gcm, aes-256-gcm or chacha20-ietf-poly1305; SSR/plugins and SS2022 are not this adapter's AEAD mode")
 	}
 	node.Type = "shadowsocks"
 	node.Security = None
-	node.Shadowsocks = &ShadowsocksNode{CommonNode: CommonNode{Host: host, ServerPort: c.ssPort, BaseConfig: &BaseConfig{PushInterval: "60s", PullInterval: "60s"}}, Cipher: c.ssMethod}
+	node.Shadowsocks = &ShadowsocksNode{CommonNode: CommonNode{Host: host, ServerPort: port, BaseConfig: &BaseConfig{PushInterval: "60s", PullInterval: "60s"}}, Cipher: method}
 	return node, nil
 }

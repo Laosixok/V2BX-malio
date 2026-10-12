@@ -166,3 +166,46 @@ func TestSSPanelVlessGRPCAndPlain(t *testing.T) {
 		t.Fatal(n)
 	}
 }
+
+func TestSSPanelAutomaticShadowsocks(t *testing.T) {
+	data := SSPanelNodeData{Sort: 0, Server: "origin.example", SSPort: 22222, SSMethod: "aes-128-gcm"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(SSPanelNodeResponse{Ret: 1, Data: data})
+	}))
+	defer srv.Close()
+	c, err := NewSSPanel(&conf.ApiConfig{APIHost: srv.URL, Key: "test", NodeID: 20, NodeType: "shadowsocks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := c.GetNodeInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Common.ServerPort != 22222 || n.Shadowsocks.Cipher != "aes-128-gcm" {
+		t.Fatal(n)
+	}
+	if n, err = c.GetNodeInfo(); err != nil || n != nil {
+		t.Fatal("unchanged config rebuilt", err)
+	}
+	data.SSPort = 24444
+	data.SSMethod = "chacha20-ietf-poly1305"
+	n, err = c.GetNodeInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Common.ServerPort != 24444 || n.Shadowsocks.Cipher != data.SSMethod {
+		t.Fatal("panel changes not detected", n)
+	}
+	data.SSConfigError = "ambiguous carrier"
+	if _, err = c.GetNodeInfo(); err == nil {
+		t.Fatal("invalid panel config accepted")
+	}
+	c.ssPort, c.ssMethod = 33333, "aes-256-gcm"
+	n, err = c.GetNodeInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Common.ServerPort != 33333 || n.Shadowsocks.Cipher != "aes-256-gcm" {
+		t.Fatal("manual override ignored", n)
+	}
+}
