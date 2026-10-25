@@ -237,7 +237,7 @@ require (
 	github.com/sagernet/quic-go v0.52.0-beta.1 // indirect
 	github.com/sagernet/sing-mux v0.3.2 // indirect
 	github.com/sagernet/sing-quic v0.5.0-beta.1 // indirect
-	github.com/sagernet/sing-shadowsocks v0.2.7 // indirect
+	github.com/sagernet/sing-shadowsocks v0.2.7
 	github.com/sagernet/sing-shadowsocks2 v0.2.0 // indirect
 	github.com/sagernet/sing-shadowtls v0.2.1-0.20250503051639-fcd445d33c11 // indirect
 	github.com/sagernet/sing-tun v0.6.6-0.20250428031943-0686f8c4f210 // indirect

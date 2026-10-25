@@ -42,6 +42,7 @@ func RegisterInbound(registry *inbound.Registry) {
 
 type serverConnection struct {
 	conn          net.Conn
+	cancel        context.CancelFunc
 	done          chan struct{}
 	user          string
 	authenticated bool
@@ -152,10 +153,11 @@ func (h *Inbound) Close() error {
 	return err
 }
 
-// closeConnections first interrupts every socket, including TLS handshakes,
-// then waits for all session handlers to release their registry entries.
+// closeConnections cancels session work and interrupts every socket, including
+// TLS handshakes, then waits for handlers to release their registry entries.
 func closeConnections(connections []*serverConnection) {
 	for _, connection := range connections {
+		connection.cancel()
 		_ = connection.conn.Close()
 	}
 	for _, connection := range connections {
@@ -164,7 +166,9 @@ func closeConnections(connections []*serverConnection) {
 }
 
 func (h *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	connection := &serverConnection{conn: conn, done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	connection := &serverConnection{conn: conn, cancel: cancel, done: make(chan struct{})}
 	h.mutex.Lock()
 	if h.closed {
 		h.mutex.Unlock()
@@ -174,7 +178,9 @@ func (h *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata a
 	h.connections[connection] = struct{}{}
 	h.mutex.Unlock()
 
-	ctx, cancel := context.WithCancel(ctx)
+	// Context cancellation must interrupt pre-session authentication reads too.
+	stopSocketClose := context.AfterFunc(ctx, func() { _ = connection.conn.Close() })
+	defer stopSocketClose()
 	var connectionErr error
 	defer func() {
 		// Abort pending route/dial work as well as closing the session socket.
@@ -238,6 +244,11 @@ func (h *Inbound) serveConnection(ctx context.Context, conn net.Conn, connection
 		}
 		(*inboundHandler)(h).NewConnectionEx(ctx, stream, metadata.Source, destination, nil)
 	}, &h.padding, h.logger)
+	// Closing only TCP cannot interrupt recvLoop while it is delivering a
+	// frame to an unread stream pipe. Close the session to release those pipes
+	// and the pooled frame buffer before waiting for this handler to exit.
+	stopSessionClose := context.AfterFunc(ctx, func() { _ = serverSession.Close() })
+	defer stopSessionClose()
 	defer serverSession.Close()
 	serverSession.Run()
 	return nil

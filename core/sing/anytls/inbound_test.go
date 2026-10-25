@@ -44,10 +44,14 @@ type routedStream struct {
 type testRouter struct {
 	adapter.Router
 	routed chan routedStream
+	unread bool
 }
 
 func (r *testRouter) RouteConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	r.routed <- routedStream{conn: conn, user: metadata.User, ctx: ctx}
+	if r.unread {
+		return
+	}
 	go func() {
 		_, err := io.Copy(conn, conn)
 		_ = conn.Close()
@@ -80,6 +84,11 @@ type testConnection struct {
 
 func newTestConnection(t *testing.T, inbound *Inbound) *testConnection {
 	t.Helper()
+	return newTestConnectionContext(t, inbound, context.Background())
+}
+
+func newTestConnectionContext(t *testing.T, inbound *Inbound, ctx context.Context) *testConnection {
+	t.Helper()
 	peer, server := net.Pipe()
 	if err := peer.SetDeadline(time.Now().Add(testTimeout)); err != nil {
 		t.Fatal(err)
@@ -89,7 +98,7 @@ func newTestConnection(t *testing.T, inbound *Inbound) *testConnection {
 	go func() {
 		// This field is deliberately not the authenticated user. Deletion must
 		// use the AnyTLS password authentication result, not input metadata.
-		inbound.NewConnectionEx(context.Background(), server, adapter.InboundContext{User: "untrusted-context-user"}, func(error) {
+		inbound.NewConnectionEx(ctx, server, adapter.InboundContext{User: "untrusted-context-user"}, func(error) {
 			connection.callbacks.Add(1)
 		})
 		close(connection.done)
@@ -485,5 +494,70 @@ func TestUnnamedConfiguredUsersRemainDistinct(t *testing.T) {
 		authenticate(t, inbound, connection, password, "")
 		_ = connection.peer.Close()
 		waitDone(t, connection)
+	}
+}
+
+// An outbound which stops reading leaves recvLoop blocked in pipeW.Write,
+// holding a frame buffer. Closing TCP alone cannot unblock that write.
+func TestShutdownReleasesUnreadStream(t *testing.T) {
+	for _, shutdown := range []string{"close", "delete-user", "cancel"} {
+		t.Run(shutdown, func(t *testing.T) {
+			inbound, router := newTestInbound(t, nil)
+			router.unread = true
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			connection := newTestConnectionContext(t, inbound, ctx)
+			authenticate(t, inbound, connection, "alice-secret", "alice")
+			client, stream, routed := openTestStream(t, router, connection)
+			t.Cleanup(func() { _ = routed.conn.Close() })
+			if _, err := stream.Write(make([]byte, 32768)); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() {
+				switch shutdown {
+				case "close":
+					done <- inbound.Close()
+				case "delete-user":
+					done <- inbound.DelUsers([]string{"alice"})
+				default:
+					cancel()
+					done <- nil
+				}
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(testTimeout):
+				t.Fatal("shutdown blocked on unread stream")
+			}
+			waitDone(t, connection)
+			eventually(t, "client session shutdown", client.IsClosed)
+			if routed.ctx.Err() == nil {
+				t.Fatal("route context remains active")
+			}
+			if got := connectionCount(inbound); got != 0 {
+				t.Fatalf("retained %d connections", got)
+			}
+		})
+	}
+}
+
+func TestCancellationInterruptsPartialAuthentication(t *testing.T) {
+	inbound, _ := newTestInbound(t, nil)
+	for i := 0; i < 32; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		connection := newTestConnectionContext(t, inbound, ctx)
+		if _, err := connection.peer.Write(authentication("alice-secret")[:12]); err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		cancel()
+		waitDone(t, connection)
+		if got := connectionCount(inbound); got != 0 {
+			t.Fatalf("retained %d connections", got)
+		}
 	}
 }
